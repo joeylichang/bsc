@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 	"path/filepath"
 	"gopkg.in/urfave/cli.v1"
 
@@ -26,7 +27,6 @@ func trieInspectorRun(ctx *cli.Context) error {
 	path 		:= ctx.String("path")
 	num  		:= ctx.Uint64("num")
 	lastheader  := ctx.Bool("lastheader")
-
 
     db, err := rawdb.NewLevelDBDatabaseWithFreezer(path, 512, 20000, filepath.Join(path, "ancient"), "eth/db/chaindata/", true)
     if err != nil {
@@ -57,5 +57,9 @@ func trieInspectorRun(ctx *cli.Context) error {
     	return err
     }
 
-    return inspector.Do()
+    startTime:=time.Now().Format("2006-01-02 15:04:05") 
+    err = inspector.Do()
+    endTime:=time.Now().Format("2006-01-02 15:04:05") 
+    fmt.Println("start time: " + startTime + " , end time: " + endTime)
+    return err
 }
