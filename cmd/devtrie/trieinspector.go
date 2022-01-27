@@ -33,21 +33,20 @@ func trieInspectorRun(ctx *cli.Context) error {
     	return err
     }
 
-    var rootHash common.Hash
     if lastheader {
-    	rootHash = rawdb.ReadHeadHeaderHash(db)
-    } else {
-    	hash := rawdb.ReadCanonicalHash(db, num)
-		if hash == (common.Hash{}) {
-			fmt.Println("the num of header is empty")
-			return nil
-			
-		}
-		header := rawdb.ReadHeader(db, hash, num)
-		rootHash = header.Root
-    }
+    	headerHash := rawdb.ReadHeadHeaderHash(db)
+    	num = *(rawdb.ReadHeaderNumber(db, headerHash))
+    } 
 
-    tr, err := trie.New(rootHash, trie.NewDatabase(db))
+    hash := rawdb.ReadCanonicalHash(db, num)
+    if hash == (common.Hash{}) {
+		fmt.Println("the num of header is empty")
+		return nil
+			
+	}
+    header := rawdb.ReadHeader(db, hash, num)
+
+    tr, err := trie.New(header.Root, trie.NewDatabase(db))
     if err != nil {
     	return err
     }
