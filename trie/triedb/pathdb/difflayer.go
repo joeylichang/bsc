@@ -88,19 +88,19 @@ type pathBloomHasher struct {
 	node  common.Hash
 }
 
-func NewPathBloomHasher(owner common.Hash, node common.Hash) pathBloomHasher {
-	return pathBloomHasher{
+func NewPathBloomHasher(owner common.Hash, node common.Hash) *pathBloomHasher {
+	return &pathBloomHasher{
 		owner: owner,
 		node:  node,
 	}
 }
 
-func (h pathBloomHasher) Write(p []byte) (n int, err error) { panic("not implemented") }
-func (h pathBloomHasher) Sum(b []byte) []byte               { panic("not implemented") }
-func (h pathBloomHasher) Reset()                            { panic("not implemented") }
-func (h pathBloomHasher) BlockSize() int                    { panic("not implemented") }
-func (h pathBloomHasher) Size() int                         { return 8 }
-func (h pathBloomHasher) Sum64() uint64 {
+func (h *pathBloomHasher) Write(p []byte) (n int, err error) { panic("not implemented") }
+func (h *pathBloomHasher) Sum(b []byte) []byte               { panic("not implemented") }
+func (h *pathBloomHasher) Reset()                            { panic("not implemented") }
+func (h *pathBloomHasher) BlockSize() int                    { panic("not implemented") }
+func (h *pathBloomHasher) Size() int                         { return 8 }
+func (h *pathBloomHasher) Sum64() uint64 {
 	if h.owner == (common.Hash{}) {
 		return binary.BigEndian.Uint64(h.node[bloomAccountHasherOffset : bloomAccountHasherOffset+8])
 	}
@@ -223,7 +223,7 @@ func (dl *diffLayer) rebloom(origin *diskLayer) {
 // node retrieves the node with provided node information. It's the internal
 // version of Node function with additional accessed layer tracked. No error
 // will be returned if node is not found.
-func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, pathHash pathBloomHasher, depth int) ([]byte, error) {
+func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, pathHash *pathBloomHasher, depth int) ([]byte, error) {
 	// Hold the lock, ensure the parent won't be changed during the
 	// state accessing.
 	dl.lock.RLock()
