@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie/trienode"
+	bloomfilter "github.com/holiman/bloomfilter/v2"
 )
 
 var _ trienodebuffer = &nodebuffer{}
@@ -82,7 +83,7 @@ func (b *nodebuffer) node(owner common.Hash, path []byte, hash common.Hash) (*tr
 // the ownership of the nodes map which belongs to the bottom-most diff layer.
 // It will just hold the node references from the given map which are safe to
 // copy.
-func (b *nodebuffer) commit(nodes map[common.Hash]map[string]*trienode.Node) trienodebuffer {
+func (b *nodebuffer) commit(nodes map[common.Hash]map[string]*trienode.Node, filter *bloomfilter.Filter) trienodebuffer {
 	var (
 		delta         int64
 		overwrite     int64
@@ -264,6 +265,7 @@ func writeNodes(batch ethdb.Batch, nodes map[common.Hash]map[string]*trienode.No
 				}
 				if clean != nil {
 					clean.Set(cacheKey(owner, []byte(path)), n.Blob)
+					cleanWriteMeter.Mark(int64(len(n.Blob)))
 				}
 			}
 		}

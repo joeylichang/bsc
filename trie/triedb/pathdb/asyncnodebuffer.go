@@ -14,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie/trienode"
+	bloomfilter "github.com/holiman/bloomfilter/v2"
 )
 
 var _ trienodebuffer = &asyncnodebuffer{}
@@ -63,11 +64,11 @@ func (a *asyncnodebuffer) node(owner common.Hash, path []byte, hash common.Hash)
 // the ownership of the nodes map which belongs to the bottom-most diff layer.
 // It will just hold the node references from the given map which are safe to
 // copy.
-func (a *asyncnodebuffer) commit(nodes map[common.Hash]map[string]*trienode.Node) trienodebuffer {
+func (a *asyncnodebuffer) commit(nodes map[common.Hash]map[string]*trienode.Node, filter *bloomfilter.Filter) trienodebuffer {
 	a.mux.Lock()
 	defer a.mux.Unlock()
 
-	err := a.current.commit(nodes)
+	err := a.current.commit(nodes, filter)
 	if err != nil {
 		log.Crit("[BUG] failed to commit nodes to asyncnodebuffer", "error", err)
 	}
@@ -192,20 +193,34 @@ type nodecache struct {
 	size      uint64                                    // The size of aggregated writes
 	limit     uint64                                    // The maximum memory allowance in bytes
 	nodes     map[common.Hash]map[string]*trienode.Node // The dirty node set, mapped by owner and path
+	diffd     *bloomfilter.Filter                       // Bloom filter tracking all the diffed items
 	immutable uint64                                    // The flag equal 1, flush nodes to disk background
 }
 
 func newNodeCache(limit, size uint64, nodes map[common.Hash]map[string]*trienode.Node, layers uint64) *nodecache {
+	bloom, _ := bloomfilter.New(uint64(bloomSize), uint64(bloomFuncs))
+	for owner, subset := range nodes {
+		for _, n := range subset {
+			bloom.Add(NewPathBloomHasher(owner, n.Hash))
+		}
+	}
 	return &nodecache{
 		layers:    layers,
 		size:      size,
 		limit:     limit,
 		nodes:     nodes,
+		diffd:     bloom,
 		immutable: 0,
 	}
 }
 
 func (nc *nodecache) node(owner common.Hash, path []byte, hash common.Hash) (*trienode.Node, error) {
+	if nc.diffd != nil && !nc.diffd.Contains(NewPathBloomHasher(owner, hash)) {
+		dirtyBloomMissMeter.Mark(1)
+		return nil, nil
+	}
+	dirtyBloomHitMeter.Mark(1)
+
 	subset, ok := nc.nodes[owner]
 	if !ok {
 		return nil, nil
@@ -222,7 +237,7 @@ func (nc *nodecache) node(owner common.Hash, path []byte, hash common.Hash) (*tr
 	return n, nil
 }
 
-func (nc *nodecache) commit(nodes map[common.Hash]map[string]*trienode.Node) error {
+func (nc *nodecache) commit(nodes map[common.Hash]map[string]*trienode.Node, filter *bloomfilter.Filter) error {
 	if atomic.LoadUint64(&nc.immutable) == 1 {
 		return errWriteImmutable
 	}
@@ -259,6 +274,10 @@ func (nc *nodecache) commit(nodes map[common.Hash]map[string]*trienode.Node) err
 		}
 		nc.nodes[owner] = current
 	}
+	// only merge bottom filter will increase the misjudgment rate, but this is the lowest cost
+	if nc.diffd != nil && filter != nil {
+		_ = nc.diffd.UnionInPlace(filter)
+	}
 	nc.updateSize(delta)
 	nc.layers++
 	gcNodesMeter.Mark(overwrite)
@@ -282,6 +301,7 @@ func (nc *nodecache) reset() {
 	nc.layers = 0
 	nc.size = 0
 	nc.nodes = make(map[common.Hash]map[string]*trienode.Node)
+	nc.diffd, _ = bloomfilter.New(uint64(bloomSize), uint64(bloomFuncs))
 }
 
 func (nc *nodecache) empty() bool {
@@ -352,6 +372,7 @@ func (nc *nodecache) merge(nc1 *nodecache) (*nodecache, error) {
 	res.layers = immutable.layers + mutable.layers
 	res.limit = immutable.size
 	res.nodes = make(map[common.Hash]map[string]*trienode.Node)
+	res.diffd, _ = immutable.diffd.Union(mutable.diffd)
 	for acc, subTree := range immutable.nodes {
 		if _, ok := res.nodes[acc]; !ok {
 			res.nodes[acc] = make(map[string]*trienode.Node)
@@ -421,6 +442,15 @@ func (nc *nodecache) revert(db ethdb.KeyValueReader, nodes map[common.Hash]map[s
 			delta += int64(len(n.Blob)) - int64(len(orig.Blob))
 		}
 	}
+	bloom, _ := bloomfilter.New(uint64(bloomSize), uint64(bloomFuncs))
+	for owner, subset := range nc.nodes {
+		for _, node := range subset {
+			if bloom != nil {
+				bloom.Add(NewPathBloomHasher(owner, node.Hash))
+			}
+		}
+	}
+	nc.diffd = bloom
 	nc.updateSize(delta)
 	return nil
 }
@@ -435,6 +465,9 @@ func copyNodeCache(n *nodecache) *nodecache {
 		limit:     n.limit,
 		immutable: atomic.LoadUint64(&n.immutable),
 		nodes:     make(map[common.Hash]map[string]*trienode.Node),
+	}
+	if n.diffd != nil {
+		nc.diffd, _ = n.diffd.Copy()
 	}
 	for acc, subTree := range n.nodes {
 		if _, ok := nc.nodes[acc]; !ok {

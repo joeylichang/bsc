@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/trie/triestate"
+	bloomfilter "github.com/holiman/bloomfilter/v2"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -43,7 +44,7 @@ type trienodebuffer interface {
 	// the ownership of the nodes map which belongs to the bottom-most diff layer.
 	// It will just hold the node references from the given map which are safe to
 	// copy.
-	commit(nodes map[common.Hash]map[string]*trienode.Node) trienodebuffer
+	commit(nodes map[common.Hash]map[string]*trienode.Node, filter *bloomfilter.Filter) trienodebuffer
 
 	// revert is the reverse operation of commit. It also merges the provided nodes
 	// into the trienodebuffer, the difference is that the provided node set should
@@ -262,7 +263,7 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	// Construct a new disk layer by merging the nodes from the provided diff
 	// layer, and flush the content in disk layer if there are too many nodes
 	// cached. The clean cache is inherited from the original disk layer.
-	ndl := newDiskLayer(bottom.root, bottom.stateID(), dl.db, dl.cleans, dl.buffer.commit(bottom.nodes))
+	ndl := newDiskLayer(bottom.root, bottom.stateID(), dl.db, dl.cleans, dl.buffer.commit(bottom.nodes, bottom.currentDiffed))
 
 	// In a unique scenario where the ID of the oldest history object (after tail
 	// truncation) surpasses the persisted state ID, we take the necessary action

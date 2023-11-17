@@ -17,14 +17,96 @@
 package pathdb
 
 import (
+	"encoding/binary"
 	"fmt"
+	"math"
+	"math/rand"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/trie/triestate"
+	bloomfilter "github.com/holiman/bloomfilter/v2"
 )
+
+var (
+	// aggregatorMemoryLimit is the maximum size of the bottom-most diff layer
+	// that aggregates the writes from above until it's flushed into the disk
+	// layer.
+	//
+	// Note, bumping this up might drastically increase the size of the bloom
+	// filters that's stored in every diff layer. Don't do that without fully
+	// understanding all the implications.
+	aggregatorMemoryLimit = uint64(4 * 1024 * 1024)
+
+	// aggregatorItemLimit is an approximate number of items that will end up
+	// in the agregator layer before it's flushed out to disk. A plain account
+	// weighs around 14B (+hash), a storage slot 32B (+hash), a deleted slot
+	// 0B (+hash). Slots are mostly set/unset in lockstep, so that average at
+	// 16B (+hash). All in all, the average entry seems to be 15+32=47B. Use a
+	// smaller number to be on the safe side.
+	aggregatorItemLimit = aggregatorMemoryLimit / 42
+
+	// bloomTargetError is the target false positive rate when the aggregator
+	// layer is at its fullest. The actual value will probably move around up
+	// and down from this number, it's mostly a ballpark figure.
+	//
+	// Note, dropping this down might drastically increase the size of the bloom
+	// filters that's stored in every diff layer. Don't do that without fully
+	// understanding all the implications.
+	bloomTargetError = 0.02
+
+	// bloomSize is the ideal bloom filter size given the maximum number of items
+	// it's expected to hold and the target false positive error rate.
+	bloomSize = math.Ceil(float64(aggregatorItemLimit) * math.Log(bloomTargetError) / math.Log(1/math.Pow(2, math.Log(2))))
+
+	// bloomFuncs is the ideal number of bits a single entry should set in the
+	// bloom filter to keep its size to a minimum (given it's size and maximum
+	// entry count).
+	bloomFuncs = math.Round((bloomSize / float64(aggregatorItemLimit)) * math.Log(2))
+
+	// the bloom offsets are runtime constants which determines which part of the
+	// account/storage hash the hasher functions looks at, to determine the
+	// bloom key for an account/slot. This is randomized at init(), so that the
+	// global population of nodes do not all display the exact same behaviour with
+	// regards to bloom content
+	bloomAccountHasherOffset = 0
+	bloomStorageHasherOffset = 0
+)
+
+func init() {
+	// Init the bloom offsets in the range [0:24] (requires 8 bytes)
+	bloomAccountHasherOffset = rand.Intn(25)
+	bloomStorageHasherOffset = rand.Intn(25)
+}
+
+// pathBloomHasher is a wrapper to satisfy the interface API requirements of the
+// bloom library used. It's used to convert an account hash into a 64 bit mini hash.
+type pathBloomHasher struct {
+	owner common.Hash
+	node  common.Hash
+}
+
+func NewPathBloomHasher(owner common.Hash, node common.Hash) pathBloomHasher {
+	return pathBloomHasher{
+		owner: owner,
+		node:  node,
+	}
+}
+
+func (h pathBloomHasher) Write(p []byte) (n int, err error) { panic("not implemented") }
+func (h pathBloomHasher) Sum(b []byte) []byte               { panic("not implemented") }
+func (h pathBloomHasher) Reset()                            { panic("not implemented") }
+func (h pathBloomHasher) BlockSize() int                    { panic("not implemented") }
+func (h pathBloomHasher) Size() int                         { return 8 }
+func (h pathBloomHasher) Sum64() uint64 {
+	if h.owner == (common.Hash{}) {
+		return binary.BigEndian.Uint64(h.node[bloomAccountHasherOffset : bloomAccountHasherOffset+8])
+	}
+	return binary.BigEndian.Uint64(h.owner[bloomStorageHasherOffset:bloomStorageHasherOffset+8]) ^
+		binary.BigEndian.Uint64(h.node[bloomStorageHasherOffset:bloomStorageHasherOffset+8])
+}
 
 // diffLayer represents a collection of modifications made to the in-memory tries
 // along with associated state changes after running a block on top.
@@ -39,6 +121,10 @@ type diffLayer struct {
 	nodes  map[common.Hash]map[string]*trienode.Node // Cached trie nodes indexed by owner and path
 	states *triestate.Set                            // Associated state change set for building history
 	memory uint64                                    // Approximate guess as to how much memory we use
+
+	origin        *diskLayer
+	currentDiffed *bloomfilter.Filter // Bloom filter tracking all the diffed items belong to current layer
+	parentsDiffed *bloomfilter.Filter // Bloom filter tracking all the diffed items up to the disk layer
 
 	parent layer        // Parent layer modified by this one, never nil, **can be changed**
 	lock   sync.RWMutex // Lock used to protect parent
@@ -58,13 +144,33 @@ func newDiffLayer(parent layer, root common.Hash, id uint64, block uint64, nodes
 		states: states,
 		parent: parent,
 	}
-	for _, subset := range nodes {
-		for path, n := range subset {
-			dl.memory += uint64(n.Size() + len(path))
-			size += int64(len(n.Blob) + len(path))
-		}
-		count += len(subset)
+	diffed, err := bloomfilter.New(uint64(bloomSize), uint64(bloomFuncs))
+	if err != nil {
+		log.Warn("failed to init difflayer bloom filter", "error", err)
 	}
+	if diffed != nil {
+		for owner, subset := range nodes {
+			for path, n := range subset {
+				dl.memory += uint64(n.Size() + len(path))
+				size += int64(len(n.Blob) + len(path))
+				diffed.Add(NewPathBloomHasher(owner, n.Hash))
+			}
+			count += len(subset)
+		}
+	}
+	dl.currentDiffed = diffed
+	dl.parentsDiffed = diffed
+	if diffed != nil {
+		if par, ok := dl.parent.(*diffLayer); ok {
+			mergedBloom, err := par.parentsDiffed.Union(dl.currentDiffed)
+			if err != nil {
+				log.Error("failed to merge bloom filter", "parent", par.block, "child", dl.block, "error", err)
+			} else {
+				dl.parentsDiffed = mergedBloom
+			}
+		}
+	}
+
 	if states != nil {
 		dl.memory += uint64(states.Size())
 	}
@@ -95,14 +201,56 @@ func (dl *diffLayer) parentLayer() layer {
 	return dl.parent
 }
 
+// rebloom discards the layer's current bloom and rebuilds it from scratch based
+// on the parent's and the local diffs.
+func (dl *diffLayer) rebloom(origin *diskLayer) {
+	dl.lock.Lock()
+	defer dl.lock.Unlock()
+
+	// Inject the new origin that triggered the rebloom
+	dl.origin = origin
+
+	// Retrieve the parent bloom or create a fresh empty one
+	if parent, ok := dl.parent.(*diffLayer); ok {
+		parent.lock.RLock()
+		dl.parentsDiffed, _ = parent.parentsDiffed.Union(dl.currentDiffed)
+		parent.lock.RUnlock()
+	} else {
+		dl.parentsDiffed, _ = dl.currentDiffed.Copy()
+	}
+}
+
 // node retrieves the node with provided node information. It's the internal
 // version of Node function with additional accessed layer tracked. No error
 // will be returned if node is not found.
-func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, depth int) ([]byte, error) {
+func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, pathHash pathBloomHasher, depth int) ([]byte, error) {
 	// Hold the lock, ensure the parent won't be changed during the
 	// state accessing.
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
+
+	if dl.parentsDiffed != nil && !dl.parentsDiffed.Contains(pathHash) {
+		if dl.origin != nil {
+			return dl.origin.Node(owner, path, hash)
+		}
+		parentLayer := dl.parent
+		for {
+			if disk, ok := parentLayer.(*diskLayer); ok {
+				return disk.Node(owner, path, hash)
+			}
+			parentLayer = parentLayer.parentLayer()
+		}
+	}
+	dirtyBloomHitMeter.Mark(1)
+
+	if dl.currentDiffed != nil && !dl.currentDiffed.Contains(pathHash) {
+		// Trie node unknown to this layer, resolve from parent
+		if diff, ok := dl.parent.(*diffLayer); ok {
+			return diff.node(owner, path, hash, pathHash, depth+1)
+		}
+		// Failed to resolve through diff layers, fallback to disk layer
+		return dl.parent.Node(owner, path, hash)
+	}
 
 	// If the trie node is known locally, return it
 	subset, ok := dl.nodes[owner]
@@ -124,7 +272,7 @@ func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 	}
 	// Trie node unknown to this layer, resolve from parent
 	if diff, ok := dl.parent.(*diffLayer); ok {
-		return diff.node(owner, path, hash, depth+1)
+		return diff.node(owner, path, hash, pathHash, depth+1)
 	}
 	// Failed to resolve through diff layers, fallback to disk layer
 	return dl.parent.Node(owner, path, hash)
@@ -133,7 +281,7 @@ func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 // Node implements the layer interface, retrieving the trie node blob with the
 // provided node information. No error will be returned if the node is not found.
 func (dl *diffLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
-	return dl.node(owner, path, hash, 0)
+	return dl.node(owner, path, hash, NewPathBloomHasher(owner, hash), 0)
 }
 
 // update implements the layer interface, creating a new layer on top of the

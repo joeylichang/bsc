@@ -24,6 +24,9 @@ var (
 	cleanReadMeter  = metrics.NewRegisteredMeter("pathdb/clean/read", nil)
 	cleanWriteMeter = metrics.NewRegisteredMeter("pathdb/clean/write", nil)
 
+	dirtyBloomHitMeter  = metrics.NewRegisteredMeter("pathdb/dirty/bloom/hit", nil)
+	dirtyBloomMissMeter = metrics.NewRegisteredMeter("pathdb/dirty/bloom/miss", nil)
+
 	dirtyHitMeter         = metrics.NewRegisteredMeter("pathdb/dirty/hit", nil)
 	dirtyMissMeter        = metrics.NewRegisteredMeter("pathdb/dirty/miss", nil)
 	dirtyReadMeter        = metrics.NewRegisteredMeter("pathdb/dirty/read", nil)
