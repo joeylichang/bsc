@@ -159,17 +159,17 @@ func newDiffLayer(parent layer, root common.Hash, id uint64, block uint64, nodes
 		}
 	}
 	dl.currentDiffed = diffed
-	dl.parentsDiffed = diffed
-	if diffed != nil {
-		if par, ok := dl.parent.(*diffLayer); ok {
-			mergedBloom, err := par.parentsDiffed.Union(dl.currentDiffed)
-			if err != nil {
-				log.Error("failed to merge bloom filter", "parent", par.block, "child", dl.block, "error", err)
-			} else {
-				dl.parentsDiffed = mergedBloom
-			}
-		}
-	}
+	//dl.parentsDiffed = diffed
+	//if diffed != nil {
+	//	if par, ok := dl.parent.(*diffLayer); ok {
+	//		mergedBloom, err := par.parentsDiffed.Union(dl.currentDiffed)
+	//		if err != nil {
+	//			log.Error("failed to merge bloom filter", "parent", par.block, "child", dl.block, "error", err)
+	//		} else {
+	//			dl.parentsDiffed = mergedBloom
+	//		}
+	//	}
+	//}
 
 	if states != nil {
 		dl.memory += uint64(states.Size())
@@ -229,19 +229,19 @@ func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, path
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
-	if dl.parentsDiffed != nil && !dl.parentsDiffed.Contains(pathHash) {
-		if dl.origin != nil {
-			return dl.origin.Node(owner, path, hash)
-		}
-		parentLayer := dl.parent
-		for {
-			if disk, ok := parentLayer.(*diskLayer); ok {
-				return disk.Node(owner, path, hash)
-			}
-			parentLayer = parentLayer.parentLayer()
-		}
-	}
-	dirtyBloomHitMeter.Mark(1)
+	//if dl.parentsDiffed != nil && !dl.parentsDiffed.Contains(pathHash) {
+	//	if dl.origin != nil {
+	//		return dl.origin.Node(owner, path, hash)
+	//	}
+	//	parentLayer := dl.parent
+	//	for {
+	//		if disk, ok := parentLayer.(*diskLayer); ok {
+	//			return disk.Node(owner, path, hash)
+	//		}
+	//		parentLayer = parentLayer.parentLayer()
+	//	}
+	//}
+	//dirtyBloomHitMeter.Mark(1)
 
 	if dl.currentDiffed != nil && !dl.currentDiffed.Contains(pathHash) {
 		// Trie node unknown to this layer, resolve from parent
@@ -261,7 +261,7 @@ func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, path
 			// bubble up an error here. It shouldn't happen at all.
 			if n.Hash != hash {
 				dirtyFalseMeter.Mark(1)
-				log.Error("Unexpected trie node in diff layer", "owner", owner, "path", path, "expect", hash, "got", n.Hash)
+				log.Error("Unexpected trie node in diff layer", "owner", owner, "path", path, "expect", hash, "got", n.Hash, "depth", depth)
 				return nil, newUnexpectedNodeError("diff", hash, n.Hash, owner, path, n.Blob)
 			}
 			dirtyHitMeter.Mark(1)
