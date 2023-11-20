@@ -230,7 +230,8 @@ func (db *Database) Update(root common.Hash, parentRoot common.Hash, block uint6
 	defer func() {
 		capDifflayerTimeTimer.UpdateSince(start)
 	}()
-	return db.tree.cap(root, maxDiffLayers)
+	err := db.tree.cap(root, maxDiffLayers)
+	return err
 }
 
 // Commit traverses downwards the layer tree from a specified layer with the

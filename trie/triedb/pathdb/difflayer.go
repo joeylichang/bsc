@@ -139,7 +139,8 @@ func (dl *diffLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]b
 		queryNodeTimeTimer.UpdateSince(start)
 	}()
 	queryNodeMeter.Mark(1)
-	return dl.node(owner, path, hash, 0)
+	data, err := dl.node(owner, path, hash, 0)
+	return data, err
 }
 
 // update implements the layer interface, creating a new layer on top of the
