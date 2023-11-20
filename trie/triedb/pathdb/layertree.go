@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -157,11 +158,14 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 		// parent is linked correctly.
 		diff.lock.Lock()
 
+		start := time.Now()
 		base, err := parent.persist(false)
 		if err != nil {
 			diff.lock.Unlock()
 			return err
 		}
+		persistDifflayerTimeTimer.UpdateSince(start)
+
 		tree.layers[base.rootHash()] = base
 		diff.parent = base
 

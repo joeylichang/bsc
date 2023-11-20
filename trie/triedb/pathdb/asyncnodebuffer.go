@@ -64,6 +64,11 @@ func (a *asyncnodebuffer) node(owner common.Hash, path []byte, hash common.Hash)
 // It will just hold the node references from the given map which are safe to
 // copy.
 func (a *asyncnodebuffer) commit(nodes map[common.Hash]map[string]*trienode.Node) trienodebuffer {
+	start := time.Now()
+	defer func() {
+		nodeBufCommitTimeTimer.UpdateSince(start)
+	}()
+
 	a.mux.Lock()
 	defer a.mux.Unlock()
 
@@ -122,6 +127,11 @@ func (a *asyncnodebuffer) empty() bool {
 // flush persists the in-memory dirty trie node into the disk if the configured
 // memory threshold is reached. Note, all data must be written atomically.
 func (a *asyncnodebuffer) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, id uint64, force bool) error {
+	start := time.Now()
+	defer func() {
+		nodeBufFlushTimeTimer.UpdateSince(start)
+	}()
+
 	a.mux.Lock()
 	defer a.mux.Unlock()
 

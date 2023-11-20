@@ -38,6 +38,18 @@ var (
 	commitNodesMeter = metrics.NewRegisteredMeter("pathdb/commit/nodes", nil)
 	commitBytesMeter = metrics.NewRegisteredMeter("pathdb/commit/bytes", nil)
 
+	queryNodeTimeTimer = metrics.NewRegisteredTimer("pathdb/query/time", nil)
+	queryDBTimeTimer   = metrics.NewRegisteredTimer("pathdb/query/db", nil)
+
+	queryNodeMeter = metrics.NewRegisteredMeter("pathdb/query/node/times", nil)
+	queryDBMeter   = metrics.NewRegisteredMeter("pathdb/query/node/db/times", nil)
+
+	capDifflayerTimeTimer     = metrics.NewRegisteredTimer("pathdb/cap/difflayer/time", nil)
+	persistDifflayerTimeTimer = metrics.NewRegisteredTimer("pathdb/persist/difflayer/time", nil)
+
+	nodeBufCommitTimeTimer = metrics.NewRegisteredTimer("pathdb/nodebuff/commit/time", nil)
+	nodeBufFlushTimeTimer  = metrics.NewRegisteredTimer("pathdb/nodebuff/flush/time", nil)
+
 	gcNodesMeter = metrics.NewRegisteredMeter("pathdb/gc/nodes", nil)
 	gcBytesMeter = metrics.NewRegisteredMeter("pathdb/gc/bytes", nil)
 

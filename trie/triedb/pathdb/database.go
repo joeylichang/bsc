@@ -226,6 +226,10 @@ func (db *Database) Update(root common.Hash, parentRoot common.Hash, block uint6
 	// - head-1 layer is paired with HEAD-1 state
 	// - head-127 layer(bottom-most diff layer) is paired with HEAD-127 state
 	// - head-128 layer(disk layer) is paired with HEAD-128 state
+	start := time.Now()
+	defer func() {
+		capDifflayerTimeTimer.UpdateSince(start)
+	}()
 	return db.tree.cap(root, maxDiffLayers)
 }
 

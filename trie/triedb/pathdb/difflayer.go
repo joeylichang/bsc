@@ -19,6 +19,7 @@ package pathdb
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/log"
@@ -133,6 +134,11 @@ func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 // Node implements the layer interface, retrieving the trie node blob with the
 // provided node information. No error will be returned if the node is not found.
 func (dl *diffLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
+	start := time.Now()
+	defer func() {
+		queryNodeTimeTimer.UpdateSince(start)
+	}()
+	queryNodeMeter.Mark(1)
 	return dl.node(owner, path, hash, 0)
 }
 

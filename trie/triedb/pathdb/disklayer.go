@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
@@ -193,7 +194,12 @@ func (dl *diskLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]b
 	var (
 		nBlob []byte
 		nHash common.Hash
+		start = time.Now()
 	)
+	defer func() {
+		queryDBTimeTimer.UpdateSince(start)
+	}()
+	queryDBMeter.Mark(1)
 	if owner == (common.Hash{}) {
 		nBlob, nHash = rawdb.ReadAccountTrieNode(dl.db.diskdb, path)
 	} else {
