@@ -73,6 +73,8 @@ type trienodebuffer interface {
 
 	// getLayers return the size of cached difflayers.
 	getLayers() uint64
+
+	close()
 }
 
 func NewTrieNodeBuffer(sync bool, limit int, nodes map[common.Hash]map[string]*trienode.Node, layers uint64) trienodebuffer {
@@ -80,8 +82,8 @@ func NewTrieNodeBuffer(sync bool, limit int, nodes map[common.Hash]map[string]*t
 		log.Info("new sync node buffer", "limit", common.StorageSize(limit), "layers", layers)
 		return newNodeBuffer(limit, nodes, layers)
 	}
-	log.Info("new async node buffer", "limit", common.StorageSize(limit), "layers", layers)
-	return newAsyncNodeBuffer(limit, nodes, layers)
+	log.Info("new tiny node buffer", "limit", common.StorageSize(limit), "layers", layers)
+	return newTinyBufferList(limit, nodes, layers)
 }
 
 // diskLayer is a low level persistent layer built on top of a key-value store.

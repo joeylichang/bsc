@@ -46,6 +46,8 @@ const (
 	// support is 4GB, node will panic if batch size exceeds this limit.
 	MaxDirtyBufferSize = 256 * 1024 * 1024
 
+	DefaultTinyBufferSize = 32 * 1024 * 1024
+
 	// DefaultDirtyBufferSize is the default memory allowance of node buffer
 	// that aggregates the writes from above until it's flushed into the
 	// disk. It's meant to be used once the initial sync is finished.
@@ -153,7 +155,7 @@ func New(diskdb ethdb.Database, config *Config) *Database {
 	if config == nil {
 		config = Defaults
 	}
-	config = config.sanitize()
+	//config = config.sanitize()
 
 	db := &Database{
 		readOnly:   config.ReadOnly,
