@@ -44,7 +44,9 @@ const (
 	// Too large nodebuffer will cause the system to pause for a long
 	// time when write happens. Also, the largest batch that pebble can
 	// support is 4GB, node will panic if batch size exceeds this limit.
-	MaxDirtyBufferSize = 256 * 1024 * 1024
+	MaxDirtyBufferSize = 1024 * 1024 * 1024
+
+	DefaultTinyBufferSize = 256 * 1024 * 1024
 
 	// DefaultDirtyBufferSize is the default memory allowance of node buffer
 	// that aggregates the writes from above until it's flushed into the
@@ -153,7 +155,7 @@ func New(diskdb ethdb.Database, config *Config) *Database {
 	if config == nil {
 		config = Defaults
 	}
-	config = config.sanitize()
+	//config = config.sanitize()
 
 	db := &Database{
 		readOnly:   config.ReadOnly,

@@ -197,6 +197,10 @@ func (a *asyncnodebuffer) getSize() (uint64, uint64) {
 	return a.current.size, a.background.size
 }
 
+func (a *asyncnodebuffer) close() {
+	return
+}
+
 type nodecache struct {
 	layers    uint64                                    // The number of diff layers aggregated inside
 	size      uint64                                    // The size of aggregated writes
