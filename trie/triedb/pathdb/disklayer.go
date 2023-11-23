@@ -355,12 +355,6 @@ func (dl *diskLayer) setBufferSize(size int) error {
 
 // size returns the approximate size of cached nodes in the disk layer.
 func (dl *diskLayer) size() (common.StorageSize, common.StorageSize) {
-	dl.lock.RLock()
-	defer dl.lock.RUnlock()
-
-	if dl.stale {
-		return 0, 0
-	}
 	dirtyNodes, dirtyimmutableNodes := dl.buffer.getSize()
 	return common.StorageSize(dirtyNodes), common.StorageSize(dirtyimmutableNodes)
 }

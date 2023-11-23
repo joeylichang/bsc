@@ -46,7 +46,7 @@ const (
 	// support is 4GB, node will panic if batch size exceeds this limit.
 	MaxDirtyBufferSize = 256 * 1024 * 1024
 
-	DefaultTinyBufferSize = 32 * 1024 * 1024
+	DefaultTinyBufferSize = 128 * 1024 * 1024
 
 	// DefaultDirtyBufferSize is the default memory allowance of node buffer
 	// that aggregates the writes from above until it's flushed into the

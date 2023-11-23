@@ -93,19 +93,23 @@ func (b *nodebuffer) commit(nodes map[common.Hash]map[string]*trienode.Node) tri
 	}
 
 	var (
-		mx            sync.RWMutex // local concurrent mux
 		wg            sync.WaitGroup
 		mergeSubResCh = make(chan *subTree)
+		snap          = make(map[common.Hash]map[string]*trienode.Node)
 	)
+	for owner, _ := range nodes {
+		_, ok := b.nodes[owner]
+		if ok {
+			snap[owner] = b.nodes[owner]
+		}
+	}
 	wg.Add(len(nodes))
 	for owner, subset := range nodes {
 		o := owner
 		sub := subset
 		go func(account common.Hash, storage map[string]*trienode.Node) {
 			subRes := &subTree{owner: account, pathTree: nil}
-			mx.RLock()
-			current, exist := b.nodes[account]
-			mx.RUnlock()
+			current, exist := snap[account]
 			if !exist {
 				// Allocate a new map for the subset instead of claiming it directly
 				// from the passed map to avoid potential concurrent map read/write.
@@ -138,9 +142,7 @@ func (b *nodebuffer) commit(nodes map[common.Hash]map[string]*trienode.Node) tri
 	go func() {
 		for res := range mergeSubResCh {
 			if res.pathTree != nil {
-				mx.Lock()
 				b.nodes[res.owner] = res.pathTree
-				mx.Unlock()
 			}
 			b.updateSize(res.delta)
 			gcNodesMeter.Mark(res.overwrite)
