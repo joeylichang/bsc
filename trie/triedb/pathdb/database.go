@@ -144,6 +144,8 @@ type Database struct {
 	tree       *layerTree               // The group for all known layers
 	freezer    *rawdb.ResettableFreezer // Freezer for storing trie histories, nil possible in tests
 	lock       sync.RWMutex             // Lock to prevent mutations from happening at the same time
+
+	capCh chan common.Hash
 }
 
 // New attempts to load an already existing layer from a persistent key-value
@@ -153,13 +155,14 @@ func New(diskdb ethdb.Database, config *Config) *Database {
 	if config == nil {
 		config = Defaults
 	}
-	config = config.sanitize()
+	//config = config.sanitize()
 
 	db := &Database{
 		readOnly:   config.ReadOnly,
 		bufferSize: config.DirtyCacheSize,
 		config:     config,
 		diskdb:     diskdb,
+		capCh:      make(chan common.Hash, 2048),
 	}
 	// Construct the layer tree by resolving the in-disk singleton state
 	// and in-memory layer journal.
@@ -189,6 +192,7 @@ func New(diskdb ethdb.Database, config *Config) *Database {
 			log.Warn("Truncated extra state histories", "number", pruned)
 		}
 	}
+	go db.capLoop()
 	log.Warn("Path-based state scheme is an experimental feature", "sync", db.config.SyncFlush)
 	return db
 }
@@ -210,6 +214,10 @@ func (db *Database) Reader(root common.Hash) (layer, error) {
 // The passed in maps(nodes, states) will be retained to avoid copying everything.
 // Therefore, these maps must not be changed afterwards.
 func (db *Database) Update(root common.Hash, parentRoot common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *triestate.Set) error {
+	start := time.Now()
+	defer func() {
+		capDifflayerTimeTimer.UpdateSince(start)
+	}()
 	// Hold the lock to prevent concurrent mutations.
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -226,12 +234,8 @@ func (db *Database) Update(root common.Hash, parentRoot common.Hash, block uint6
 	// - head-1 layer is paired with HEAD-1 state
 	// - head-127 layer(bottom-most diff layer) is paired with HEAD-127 state
 	// - head-128 layer(disk layer) is paired with HEAD-128 state
-	start := time.Now()
-	defer func() {
-		capDifflayerTimeTimer.UpdateSince(start)
-	}()
-	err := db.tree.cap(root, maxDiffLayers)
-	return err
+	//err := db.tree.cap(root, maxDiffLayers)
+	return nil
 }
 
 // Commit traverses downwards the layer tree from a specified layer with the
@@ -246,7 +250,19 @@ func (db *Database) Commit(root common.Hash, report bool) error {
 	if db.readOnly {
 		return errSnapshotReadOnly
 	}
-	return db.tree.cap(root, 0)
+	db.capCh <- root
+	return nil
+}
+
+func (db *Database) capLoop() {
+	for {
+		select {
+		case root := <-db.capCh:
+			if err := db.tree.cap(root, maxDiffLayers); err != nil {
+				log.Error("pathdb failed to cap difflayer", "error", err, "root", root.String())
+			}
+		}
+	}
 }
 
 // Reset rebuilds the database with the specified state as the base.

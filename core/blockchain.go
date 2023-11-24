@@ -1592,6 +1592,15 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 		// If node is running in path mode, skip explicit gc operation
 		// which is unnecessary in this mode.
 		if bc.triedb.Scheme() == rawdb.PathScheme {
+			canWrite := true
+			if posa, ok := bc.engine.(consensus.PoSA); ok {
+				if !posa.EnoughDistance(bc, block.Header()) {
+					canWrite = false
+				}
+			}
+			if canWrite {
+				return bc.triedb.Commit(block.Root(), true)
+			}
 			return nil
 		}
 

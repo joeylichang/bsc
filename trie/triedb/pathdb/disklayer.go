@@ -76,6 +76,7 @@ type trienodebuffer interface {
 }
 
 func NewTrieNodeBuffer(sync bool, limit int, nodes map[common.Hash]map[string]*trienode.Node, layers uint64) trienodebuffer {
+	//return newNodeBuffer(limit, nodes, layers)
 	if sync {
 		log.Info("new sync node buffer", "limit", common.StorageSize(limit), "layers", layers)
 		return newNodeBuffer(limit, nodes, layers)
@@ -277,7 +278,7 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	if !force && rawdb.ReadPersistentStateID(dl.db.diskdb) < oldest {
 		force = true
 	}
-	if err := ndl.buffer.flush(ndl.db.diskdb, ndl.cleans, ndl.id, force); err != nil {
+	if err := ndl.buffer.flush(ndl.db.diskdb, ndl.cleans, ndl.id, true); err != nil {
 		return nil, err
 	}
 	// To remove outdated history objects from the end, we set the 'tail' parameter
@@ -353,12 +354,12 @@ func (dl *diskLayer) setBufferSize(size int) error {
 
 // size returns the approximate size of cached nodes in the disk layer.
 func (dl *diskLayer) size() (common.StorageSize, common.StorageSize) {
-	dl.lock.RLock()
-	defer dl.lock.RUnlock()
-
-	if dl.stale {
-		return 0, 0
-	}
+	//dl.lock.RLock()
+	//defer dl.lock.RUnlock()
+	//
+	//if dl.stale {
+	//	return 0, 0
+	//}
 	dirtyNodes, dirtyimmutableNodes := dl.buffer.getSize()
 	return common.StorageSize(dirtyNodes), common.StorageSize(dirtyimmutableNodes)
 }
