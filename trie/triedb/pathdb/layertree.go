@@ -37,12 +37,19 @@ import (
 type layerTree struct {
 	lock   sync.RWMutex
 	layers map[common.Hash]layer
+
+	diffCh chan layer
+	stopCh chan struct{}
 }
 
 // newLayerTree constructs the layerTree with the given head layer.
 func newLayerTree(head layer) *layerTree {
 	tree := new(layerTree)
 	tree.reset(head)
+	tree.diffCh = make(chan layer, 2048)
+	tree.stopCh = make(chan struct{})
+	go tree.capLoop()
+
 	return tree
 }
 
@@ -147,55 +154,120 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 			return nil
 		}
 	}
-	// We're out of layers, flatten anything below, stopping if it's the disk or if
-	// the memory limit is not yet exceeded.
-	switch parent := diff.parentLayer().(type) {
-	case *diskLayer:
-		return nil
-
-	case *diffLayer:
-		// Hold the lock to prevent any read operations until the new
-		// parent is linked correctly.
-		diff.lock.Lock()
-
-		start := time.Now()
-		base, err := parent.persist(false)
-		if err != nil {
-			diff.lock.Unlock()
-			return err
-		}
-		persistDifflayerTimeTimer.UpdateSince(start)
-
-		tree.layers[base.rootHash()] = base
-		diff.parent = base
-
-		diff.lock.Unlock()
-
-	default:
-		panic(fmt.Sprintf("unknown data layer in triedb: %T", parent))
-	}
-	// Remove any layer that is stale or links into a stale layer
-	children := make(map[common.Hash][]common.Hash)
-	for root, layer := range tree.layers {
-		if dl, ok := layer.(*diffLayer); ok {
-			parent := dl.parentLayer().rootHash()
-			children[parent] = append(children[parent], root)
-		}
-	}
-	var remove func(root common.Hash)
-	remove = func(root common.Hash) {
-		delete(tree.layers, root)
-		for _, child := range children[root] {
-			remove(child)
-		}
-		delete(children, root)
-	}
-	for root, layer := range tree.layers {
-		if dl, ok := layer.(*diskLayer); ok && dl.isStale() {
-			remove(root)
-		}
-	}
+	tree.diffCh <- diff
 	return nil
+
+	//// We're out of layers, flatten anything below, stopping if it's the disk or if
+	//// the memory limit is not yet exceeded.
+	//switch parent := diff.parentLayer().(type) {
+	//case *diskLayer:
+	//	return nil
+	//
+	//case *diffLayer:
+	//	// Hold the lock to prevent any read operations until the new
+	//	// parent is linked correctly.
+	//	diff.lock.Lock()
+	//
+	//	start := time.Now()
+	//	base, err := parent.persist(false)
+	//	if err != nil {
+	//		diff.lock.Unlock()
+	//		return err
+	//	}
+	//	persistDifflayerTimeTimer.UpdateSince(start)
+	//
+	//	tree.layers[base.rootHash()] = base
+	//	diff.parent = base
+	//
+	//	diff.lock.Unlock()
+	//
+	//default:
+	//	panic(fmt.Sprintf("unknown data layer in triedb: %T", parent))
+	//}
+	//// Remove any layer that is stale or links into a stale layer
+	//children := make(map[common.Hash][]common.Hash)
+	//for root, layer := range tree.layers {
+	//	if dl, ok := layer.(*diffLayer); ok {
+	//		parent := dl.parentLayer().rootHash()
+	//		children[parent] = append(children[parent], root)
+	//	}
+	//}
+	//var remove func(root common.Hash)
+	//remove = func(root common.Hash) {
+	//	delete(tree.layers, root)
+	//	for _, child := range children[root] {
+	//		remove(child)
+	//	}
+	//	delete(children, root)
+	//}
+	//for root, layer := range tree.layers {
+	//	if dl, ok := layer.(*diskLayer); ok && dl.isStale() {
+	//		remove(root)
+	//	}
+	//}
+	//return nil
+}
+
+func (tree *layerTree) capLoop() {
+	for {
+		select {
+		case <-tree.stopCh:
+			return
+		case child := <-tree.diffCh:
+			switch parent := child.parentLayer().(type) {
+			case *diskLayer:
+				continue
+			case *diffLayer:
+				diff := child.(*diffLayer)
+				// Hold the lock to prevent any read operations until the new
+				// parent is linked correctly.
+				diff.lock.Lock()
+
+				start := time.Now()
+				base, err := parent.persist(false)
+				if err != nil {
+					diff.lock.Unlock()
+					log.Crit("failed to persist difflayer error: " + err.Error())
+				}
+				persistDifflayerTimeTimer.UpdateSince(start)
+
+				tree.lock.Lock()
+				tree.layers[base.rootHash()] = base
+				tree.lock.Unlock()
+				diff.parent = base
+				diff.lock.Unlock()
+
+				// Remove any layer that is stale or links into a stale layer
+				children := make(map[common.Hash][]common.Hash)
+				tree.lock.Lock()
+				for root, layer := range tree.layers {
+					if dl, ok := layer.(*diffLayer); ok {
+						parent := dl.parentLayer().rootHash()
+						children[parent] = append(children[parent], root)
+					}
+				}
+				tree.lock.Unlock()
+
+				var remove func(root common.Hash)
+				remove = func(root common.Hash) {
+					delete(tree.layers, root)
+					for _, child := range children[root] {
+						remove(child)
+					}
+					delete(children, root)
+				}
+				tree.lock.Lock()
+				for root, layer := range tree.layers {
+					if dl, ok := layer.(*diskLayer); ok && dl.isStale() {
+						remove(root)
+					}
+				}
+				tree.lock.Unlock()
+			default:
+				panic(fmt.Sprintf("unknown data layer in triedb: %T", parent))
+			}
+		}
+	}
 }
 
 // bottom returns the bottom-most disk layer in this tree.
